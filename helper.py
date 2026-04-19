@@ -11,7 +11,8 @@ botUrl = "http://192.168.31.135"
 botPort = 3000
 token = "114514"
 headers = {"Authorization": f"Bearer {token}"}
-last_real_id = 0
+last_real_req = 0
+last_message_seq = 1430240835
 source_group_id = "1092143423"
 napcat_rootfs = "/data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/napcat"
 
@@ -23,17 +24,16 @@ def sanitize_name(name):
 
 
 
-def get_message(group_id, message_seq=None):
-    if message_seq is None:
-        message_seq = str(last_real_id) if last_real_id > 0 else "0"
-
+def get_message(group_id):
+    global last_message_seq
     payload = {
         "group_id": group_id,
-        "message_seq": message_seq,
-        "count": 5,
-        "reverseOrder": True,
-        "parse_mult_msg": True,
+        "count": 200,
+        #"reverseOrder": True,
+        "parse_mult_msg": True
     }
+    if last_message_seq:
+        payload["message_seq"] = last_message_seq
     response = requests.post(
         f"{botUrl}:{botPort}/get_group_msg_history",
         json=payload,
@@ -42,20 +42,22 @@ def get_message(group_id, message_seq=None):
     )
     if response.status_code == 200:
         data = response.json()
-        return [message for message in data.get("data", {}).get("messages", [])]
+        print(data)
+        list =[message for message in data["data"]["messages"]]
+        return list
     else:
-        body_preview = (response.text or "").strip()[:500]
-        print(f"Error: {response.status_code}, payload={payload}, response={body_preview}")
+        print(f"Error: {response.status_code}")
         return []
 
 def check_new_message(messages):
-    global last_real_id
+    global last_real_req, last_message_seq
     message_queue = []
     if(len(messages) > 0):
         for message in messages:
-            if int(message["real_seq"]) > last_real_id:
+            if int(message["real_seq"]) > last_real_req:
                 message_queue.append(message)
-        last_real_id = int(messages[-1]["real_seq"])
+        last_real_req = int(messages[-1]["real_seq"])
+        last_message_seq = int(messages[-1]["message_seq"])+1
     return message_queue
 def get_file_from_url(file_url,type):
     if type == "image":
@@ -99,10 +101,24 @@ def get_file_from_url(file_url,type):
 
 def get_message_file(messages):
     for message in messages:
-        #print(f" {message}")
-        msg = message.get("message", "")
+        if message["real_seq"]=="341":
+            print(f" {message}")
+        msg = message.get("raw_message", "")
         user= message.get("sender", {}).get("card", "Unknown")
-        print(f"Processing message from :{user}")
+        print(msg)
+        if msg.startswith("[CQ:forward"):
+            response = requests.post(
+                f"{botUrl}:{botPort}/get_forward_msg",
+                json={"message_id": message.get("message_id")},
+                headers=headers,
+                timeout=10,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                list =[message for message in data["data"]["messages"]]
+                get_message_file(list)
+            else:
+                print(f"Error retrieving forward message: {response.status_code}")
         if (msg.startswith("[CQ:image") or msg.startswith("[CQ:file")) and "file=" in msg:
             msg_type = "image" if msg.startswith("[CQ:image") else "file"
             file_name = msg.split("file=", 1)[1].split(",", 1)[0]
@@ -142,7 +158,7 @@ def get_message_file(messages):
                 print(f"Error retrieving file from {file_ref}: {e}")
 
 def main():
-    global token, botUrl, botPort, last_real_id, headers, source_group_id
+    global token, botUrl, botPort, last_real_req, last_message_seq, headers, source_group_id
     # Refresh headers after loading runtime token.
     headers = {"Authorization": f"Bearer {token}"}
     while True: # 每5秒检查一次新消息
@@ -167,7 +183,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--source-group-id",
         type=str,
-        default="817494034",
+        default="1092143423",
         help="Source group id for polling message history",
     )
     parser.add_argument(
@@ -184,7 +200,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     source_group_id = args.source_group_id
-    last_real_id = args.last_real_id
+    last_real_req = args.last_real_id
+    if args.message_seq is not None:
+        last_message_seq = int(args.message_seq)
     main()
 
 
