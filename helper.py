@@ -3,6 +3,8 @@ import time
 import argparse
 import os
 import re
+import subprocess
+import tempfile
 
 
 botUrl = "http://192.168.31.135"
@@ -11,6 +13,7 @@ token = "114514"
 headers = {"Authorization": f"Bearer {token}"}
 last_real_id = 0
 source_group_id = "1092143423"
+napcat_rootfs = "/data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/napcat"
 
 
 def sanitize_name(name):
@@ -54,13 +57,45 @@ def check_new_message(messages):
                 message_queue.append(message)
         last_real_id = int(messages[-1]["real_seq"])
     return message_queue
-def get_file_from_url(file_url):
-    response = requests.get(file_url, headers=headers, timeout=10)
-    if response.status_code == 200:
-        return response.content
-    else:
-        print(f"Error retrieving file from {file_url}: {response.status_code}")
-        return None
+def get_file_from_url(file_url,type):
+    if type == "image":
+        response = requests.get(file_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            return response.content
+        else:
+            print(f"Error retrieving {type} from {file_url}: {response.status_code}")
+            return None
+    elif type == "file":
+        if not file_url:
+            print("Empty file path from get_file response")
+            return None
+
+        remote_path = str(file_url)
+        local_path = os.path.join(napcat_rootfs, remote_path.lstrip("/"))
+        # Prefer direct local read from napcat rootfs path.
+        remote_host = botUrl.replace("http://", "").replace("https://", "").split(":", 1)[0]
+        temp_fd, temp_path = tempfile.mkstemp()
+        os.close(temp_fd)
+        try:
+            scp_cmd = [
+                "scp",
+                "-P",
+                "8022",
+                f"u0_a541@{remote_host}:{local_path}",
+                temp_path,
+            ]
+            result = subprocess.run(scp_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                print(f"Error retrieving file via scp: {stderr}")
+                return None
+
+            with open(temp_path, "rb") as file_handle:
+                return file_handle.read()
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    
 
 def get_message_file(messages):
     for message in messages:
@@ -68,7 +103,8 @@ def get_message_file(messages):
         msg = message.get("message", "")
         user= message.get("sender", {}).get("card", "Unknown")
         print(f"Processing message from :{user}")
-        if msg.startswith("[CQ:image") and "file=" in msg:
+        if (msg.startswith("[CQ:image") or msg.startswith("[CQ:file")) and "file=" in msg:
+            msg_type = "image" if msg.startswith("[CQ:image") else "file"
             file_name = msg.split("file=", 1)[1].split(",", 1)[0]
             file_url_message = requests.post(
                 f"{botUrl}:{botPort}/get_file",
@@ -79,27 +115,31 @@ def get_message_file(messages):
             #print(f"Requested file URL for {file_name}, status code: {file_url_message.status_code}")
             if file_url_message.status_code == 200:
                 data = file_url_message.json()
-                #print(f"Response data for file URL request: {data}")
-                file_url = data.get("data", {}).get("url")
-                if file_url:
-                    pass
-                    #print(f"Retrieved file URL: {file_url}")
+                response_data = data.get("data", {})
+                if msg_type == "file":
+                    file_ref = response_data.get("file") or response_data.get("url")
+                    save_name = response_data.get("file_name") or file_name
                 else:
-                    print(f"File URL not found in response for {file_name}")
+                    file_ref = response_data.get("url")
+                    save_name = file_name
+
+                if not file_ref:
+                    print(f"File reference not found in response for {file_name}: {data}")
+                    continue
             else:
                 print(f"Error retrieving file URL for {file_name}: {file_url_message.status_code}")
                 continue
             try:
-                file_content = get_file_from_url(file_url)
+                file_content = get_file_from_url(file_ref, msg_type)
                 if file_content:
                     user_dir = os.path.join("result", sanitize_name(user))
                     os.makedirs(user_dir, exist_ok=True)
-                    file_path = os.path.join(user_dir, file_name)
+                    file_path = os.path.join(user_dir, save_name)
                     with open(file_path, "wb") as file_handle:
                         file_handle.write(file_content)
                     print(f"Saved file to {file_path}")
             except Exception as e:
-                print(f"Error retrieving file from {file_url}: {e}")
+                print(f"Error retrieving file from {file_ref}: {e}")
 
 def main():
     global token, botUrl, botPort, last_real_id, headers, source_group_id

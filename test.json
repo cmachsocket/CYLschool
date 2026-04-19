@@ -121,5 +121,19 @@
     "message_sent_type": "self",
     "group_id": 817494034,
     "group_name": "孙忠裕、Solaris、8班小助手"
+  },
+  {
+    "status": "ok",
+    "retcode": 0,
+    "data": {
+      "file": "/root/.config/QQ/NapCat/temp/物联网应用7.xlsx",
+      "url": "/root/.config/QQ/NapCat/temp/物联网应用7.xlsx",
+      "file_size": "9367",
+      "file_name": "物联网应用7.xlsx"
+    },
+    "message": "",
+    "wording": "",
+    "echo": null,
+    "stream": "normal-action"
   }
 ]
