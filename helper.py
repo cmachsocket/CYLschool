@@ -1,6 +1,8 @@
 import requests
 import time
 import argparse
+import os
+import re
 
 
 botUrl = "http://192.168.31.135"
@@ -9,6 +11,11 @@ token = "114514"
 headers = {"Authorization": f"Bearer {token}"}
 last_real_id = 0
 source_group_id = "1092143423"
+
+
+def sanitize_name(name):
+    cleaned = re.sub(r"[\\/:*?\"<>|]", "_", name.strip())
+    return cleaned or "Unknown"
 
 
 
@@ -22,6 +29,7 @@ def get_message(group_id, message_seq=None):
         "message_seq": message_seq,
         "count": 5,
         "reverseOrder": True,
+        "parse_mult_msg": True,
     }
     response = requests.post(
         f"{botUrl}:{botPort}/get_group_msg_history",
@@ -44,13 +52,54 @@ def check_new_message(messages):
         for message in messages:
             if int(message["real_seq"]) > last_real_id:
                 message_queue.append(message)
-                print(message["real_seq"])
         last_real_id = int(messages[-1]["real_seq"])
     return message_queue
-def get_message_type(messages):
-    for message in messages:
-        print(message.get("message_type", "unknown"))
+def get_file_from_url(file_url):
+    response = requests.get(file_url, headers=headers, timeout=10)
+    if response.status_code == 200:
+        return response.content
+    else:
+        print(f"Error retrieving file from {file_url}: {response.status_code}")
+        return None
 
+def get_message_file(messages):
+    for message in messages:
+        #print(f" {message}")
+        msg = message.get("message", "")
+        user= message.get("sender", {}).get("card", "Unknown")
+        print(f"Processing message from :{user}")
+        if msg.startswith("[CQ:image") and "file=" in msg:
+            file_name = msg.split("file=", 1)[1].split(",", 1)[0]
+            file_url_message = requests.post(
+                f"{botUrl}:{botPort}/get_file",
+                json={"file": file_name},
+                headers=headers,
+                timeout=10,
+            )
+            #print(f"Requested file URL for {file_name}, status code: {file_url_message.status_code}")
+            if file_url_message.status_code == 200:
+                data = file_url_message.json()
+                #print(f"Response data for file URL request: {data}")
+                file_url = data.get("data", {}).get("url")
+                if file_url:
+                    pass
+                    #print(f"Retrieved file URL: {file_url}")
+                else:
+                    print(f"File URL not found in response for {file_name}")
+            else:
+                print(f"Error retrieving file URL for {file_name}: {file_url_message.status_code}")
+                continue
+            try:
+                file_content = get_file_from_url(file_url)
+                if file_content:
+                    user_dir = os.path.join("result", sanitize_name(user))
+                    os.makedirs(user_dir, exist_ok=True)
+                    file_path = os.path.join(user_dir, file_name)
+                    with open(file_path, "wb") as file_handle:
+                        file_handle.write(file_content)
+                    print(f"Saved file to {file_path}")
+            except Exception as e:
+                print(f"Error retrieving file from {file_url}: {e}")
 
 def main():
     global token, botUrl, botPort, last_real_id, headers, source_group_id
@@ -64,7 +113,7 @@ def main():
             time.sleep(5)
             continue
         try:
-            get_message_type(
+            get_message_file(
             messages=check_new_message(messages))
         except Exception as e:
             print(f"send_message出错: {e}")
@@ -78,7 +127,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--source-group-id",
         type=str,
-        default="1019963716",
+        default="817494034",
         help="Source group id for polling message history",
     )
     parser.add_argument(
