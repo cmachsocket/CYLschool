@@ -116,7 +116,7 @@ def get_message_file(messages):
             if response.status_code == 200:
                 data = response.json()
                 list =[message for message in data["data"]["messages"]]
-                get_message_file(list)
+                # get_message_file(list)   #此处上游消息中转发消息的文件无法获取，暂时注释掉递归调用，后续再优化
             else:
                 print(f"Error retrieving forward message: {response.status_code}")
         if (msg.startswith("[CQ:image") or msg.startswith("[CQ:file")) and "file=" in msg:
